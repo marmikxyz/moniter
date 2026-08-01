@@ -26,37 +26,35 @@ function saveData(data) {
 
 async function fetchNotifications() {
   const { data } = await axios.get(URL, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0'
-    }
+    headers: { "User-Agent": "Mozilla/5.0" }
   });
 
   const $ = cheerio.load(data);
   const notifications = [];
 
-  $('a').each((_, el) => {
-    const title = $(el).text().replace(/\\s+/g, ' ').trim();
-    let href = $(el).attr('href');
-    if (!title || !href) return;
+  // Find the table rows that contain the notifications
+  $("table tr").each((_, row) => {
+    const cols = $(row).find("td");
+    if (cols.length < 5) return;
 
-    if (href.startsWith('./')) href = href.slice(2);
-    if (!href.startsWith('http')) href = BASE + href;
+    const title = $(cols[1]).text().replace(/\\s+/g, " ").trim();
+    const date = $(cols[2]).text().replace(/\\s+/g, " ").trim();
 
-    notifications.push({ title, url: href });
+    let pdf = $(cols[4]).find("a").attr("href");
+    if (!title || !pdf) return;
+
+    if (pdf.startsWith("./")) pdf = pdf.slice(2);
+    if (!pdf.startsWith("http")) pdf = BASE + pdf;
+
+    notifications.push({
+      title,
+      date,
+      url: pdf
+    });
   });
 
-  const unique = [];
-  const seen = new Set();
-  for (const n of notifications) {
-    if (!seen.has(n.url)) {
-      seen.add(n.url);
-      unique.push(n);
-    }
-  }
-
-  return unique;
+  return notifications;
 }
-
 async function checkForNewNotifications() {
   try {
     const notifications = await fetchNotifications();
@@ -68,35 +66,45 @@ async function checkForNewNotifications() {
     if (db.lastPosted !== latest.url) {
       await bot.telegram.sendMessage(
         CHANNEL_ID,
-        `New NESTS / EMRS Notification\\n\\n${latest.title}\\n\\n${latest.url}`
+        `New NESTS / EMRS Notification\\n\\n` +
+        `*${latest.title}*\\n` +
+        `Published: ${latest.date}`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "Download PDF", url: latest.url }
+            ]]
+          }
+        }
       );
+
       db.lastPosted = latest.url;
       saveData(db);
-      console.log('Posted:', latest.title);
+      console.log("Posted:", latest.title);
     }
   } catch (e) {
-    console.error(e.message);
+    console.error(e);
   }
 }
 
 bot.start((ctx) => ctx.reply('Welcome! Use /show to view all current NESTS notifications.'));
 
-bot.command('show', async (ctx) => {
-  try {
-    const notifications = await fetchNotifications();
-    if (!notifications.length) return ctx.reply('No notifications found.');
+bot.command("show", async (ctx) => {
+  const notifications = await fetchNotifications();
 
-    const buttons = notifications.slice(0, 30).map((n, i) => [
-      Markup.button.callback(n.title.substring(0, 64), `GET_${i}`)
-    ]);
+  const keyboard = notifications.slice(0, 25).map(n => [
+    { text: n.title, url: n.url }
+  ]);
 
-    await ctx.reply(
-      'Current NESTS Notifications:',
-      Markup.inlineKeyboard(buttons)
-    );
-  } catch {
-    ctx.reply('Failed to fetch notifications.');
-  }
+  await ctx.reply(
+    "Current NESTS / EMRS Notifications",
+    {
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    }
+  );
 });
 
 bot.action(/GET_(\\d+)/, async (ctx) => {
